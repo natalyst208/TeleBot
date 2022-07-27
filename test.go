@@ -9,12 +9,22 @@ import (
 	"github.com/xanzy/go-gitlab"
 )
 
-const projectId = "37984935"
+const projectId = "38118348"
 const tokenBot = "5340479582:AAFA1fnfwQlaQD4PfXiBP2edUQGd2rtLipw"
 const tokenGit = "glpat-zDVjeFS2NN1vxCdLzn-6"
 const chatId = -1001757861622
 
 func main() {
+	//
+	// dotEnvErr := dotenv.Load()
+	// if dotEnvErr != nil {
+	// 	fmt.Printf("[%s] Failed to load evvironment variable\n")
+	// }
+	// projectId := os.Getenv("PROJECT_ID")
+	// tokenBot := os.Getenv("TOKEN_BOT")
+	// tokenGit := os.Getenv("TOKEN_GIT")
+	// chatId := os.Getenv("CHAT_ID")
+
 	git, err := gitlab.NewClient(tokenGit)
 	if err != nil {
 		log.Fatalf("Failed to connect gitlab: %v", err)
@@ -49,7 +59,8 @@ func getData(bot *tgbotapi.BotAPI, git *gitlab.Client, lastId *int, project *git
 			data := "Notification"
 			if *lastId != event.ID {
 				*lastId = event.ID
-				if strings.HasPrefix(event.ActionName, "pushed") {
+				fmt.Println(event)
+				if strings.HasPrefix(event.ActionName, "pushed to") {
 					branch, statusCode, err := git.Branches.GetBranch(projectId, event.PushData.Ref)
 					if err != nil {
 						log.Printf("git.Branches.GetBranch: %v", err)
@@ -68,7 +79,6 @@ func getData(bot *tgbotapi.BotAPI, git *gitlab.Client, lastId *int, project *git
 						log.Printf("Commit not found: %v", err)
 						return
 					}
-					fmt.Println(commit)
 					if branch != nil && commit != nil {
 						data = fmt.Sprintf("*%s* [%s](%s) to [%s/%s/%s](%s) \n *%s* [%s](%s) [%s](%s) ``` @%s \n Additions:%d, Deletions:%d, Total:%d```",
 							event.Author.Name, "pushed", branch.Commit.WebURL, event.Author.Username, project.Name, event.PushData.Ref, branch.WebURL,
@@ -76,8 +86,93 @@ func getData(bot *tgbotapi.BotAPI, git *gitlab.Client, lastId *int, project *git
 							"Commit", branch.Commit.WebURL, commit.ShortID,
 							commit.Stats.Additions, commit.Stats.Deletions, commit.Stats.Total)
 					}
+				} else if strings.HasPrefix(event.ActionName, "pushed new") {
+					if event.PushData.RefType == "branch" {
+						branch, statusCode, err := git.Branches.GetBranch(projectId, event.PushData.Ref)
+						if err != nil {
+							log.Printf("git.Branches.GetBranch: %v", err)
+							return
+						}
+						if statusCode.StatusCode != 200 {
+							log.Printf("Branch not found: %v", err)
+							return
+						}
+						if branch != nil {
+							data = fmt.Sprintf("*%s* %s %s [%s/%s](%s)",
+								event.Author.Name, event.PushData.Action, event.PushData.RefType, project.Name, event.PushData.Ref, branch.WebURL)
+						}
+					} else {
+						data = fmt.Sprintf("*%s* %s %s %s/%s",
+							event.Author.Name, event.PushData.Action, event.PushData.RefType, project.Name, event.PushData.Ref)
+					}
+				} else if strings.HasPrefix(event.ActionName, "opened") {
+					if event.TargetType == "Issue" {
+						issue, statusCode, err := git.Issues.GetIssue(projectId, event.TargetIID)
+						if err != nil {
+							log.Printf("git.Issues.GetIssue: %v", err)
+							return
+						}
+						if statusCode.StatusCode != 200 {
+							log.Printf("Issue not found: %v", err)
+							return
+						}
+						if issue != nil {
+							data = fmt.Sprintf("*%s* %s [%s](%s) at [%s/%s](%s/%s): *%s*",
+								event.Author.Name, issue.State, *issue.IssueType, issue.WebURL, issue.Author.Username, project.Name, issue.Author.WebURL, project.Name, event.TargetTitle)
+						}
+					} else if event.TargetType == "MergeRequest" {
+						mergeRequest, statusCode, err := git.MergeRequests.GetMergeRequest(projectId, event.TargetIID, nil)
+						if err != nil {
+							log.Printf("git.MergeRequests.GetMergeRequest: %v", err)
+							return
+						}
+						if statusCode.StatusCode != 200 {
+							log.Printf("Merge Request not found: %v", err)
+							return
+						}
+						if mergeRequest != nil {
+							data = fmt.Sprintf("*%s* %s [%s](%s) at [/%s](%s/%s): *%s*",
+								event.Author.Name, mergeRequest.State, "merge request", mergeRequest.WebURL, project.Name, mergeRequest.Author.WebURL, project.Name, event.TargetTitle)
+						}
+					} else {
+						data = fmt.Sprintf("*%s* %s %s %s/%s",
+							event.Author.Name, event.PushData.Action, event.PushData.RefType, project.Name, event.PushData.Ref)
+					}
+				} else if strings.HasPrefix(event.ActionName, "commented") {
+					if event.Note.NoteableType == "MergeRequest" {
+						mergeRequest, statusCode, err := git.MergeRequests.GetMergeRequest(projectId, event.Note.NoteableIID, nil)
+						if err != nil {
+							log.Printf("git.MergeRequests.GetMergeRequest: %v", err)
+							return
+						}
+						if statusCode.StatusCode != 200 {
+							log.Printf("Merge Request not found: %v", err)
+							return
+						}
+						if mergeRequest != nil {
+							data = fmt.Sprintf("*%s* %s [%s](%s#note_%d): ``` %s ```",
+								event.Author.Name, event.ActionName, "merge request", mergeRequest.WebURL, event.TargetID, event.Note.Body)
+						}
+					} else if event.Note.NoteableType == "Issue" {
+						issue, statusCode, err := git.Issues.GetIssue(projectId, event.Note.NoteableIID)
+						if err != nil {
+							log.Printf("git.Issues.GetIssue: %v", err)
+							return
+						}
+						if statusCode.StatusCode != 200 {
+							log.Printf("Issue not found: %v", err)
+							return
+						}
+						if issue != nil {
+							data = fmt.Sprintf("*%s* %s [%s](%s#note_%d): ``` %s ```",
+								event.Author.Name, event.ActionName, "issue", issue.WebURL, event.TargetID, event.Note.Body)
+						}
+					} else {
+						data = fmt.Sprintf("*%s* %s %s %s/%s",
+							event.Author.Name, event.PushData.Action, event.PushData.RefType, project.Name, event.PushData.Ref)
+					}
 				} else {
-					data = fmt.Sprintf("*%s* %s", event.ActionName, event.PushData.Ref)
+					data = fmt.Sprintf("*%s* %s %s %s", event.Author.Name, event.ActionName, event.TargetType, event.TargetTitle)
 				}
 				if bot != nil {
 					msg := tgbotapi.NewMessage(chatId, data)
